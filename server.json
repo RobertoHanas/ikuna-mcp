@@ -3,7 +3,7 @@
   "name": "io.github.RobertoHanas/ikuna-mcp",
   "title": "Ikuna",
   "description": "Read workspace context and activity from the running Ikuna macOS app, with app-managed permissions.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "websiteUrl": "https://www.npmjs.com/package/ikuna-mcp",
   "repository": {
     "url": "https://github.com/RobertoHanas/ikuna-mcp",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "ikuna-mcp",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "runtimeHint": "npx",
       "runtimeArguments": [
         {
