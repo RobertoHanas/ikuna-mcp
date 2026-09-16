@@ -1,0 +1,35 @@
+{
+  "name": "ikuna-mcp",
+  "mcpName": "io.github.RobertoHanas/ikuna-mcp",
+  "version": "0.1.1",
+  "description": "Stdio bridge to the MCP server included with the Ikuna macOS app",
+  "homepage": "https://www.npmjs.com/package/ikuna-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RobertoHanas/ikuna-mcp.git"
+  },
+  "type": "module",
+  "bin": {
+    "ikuna-mcp": "bin/ikuna-mcp.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin"
+  ],
+  "files": [
+    "bin/",
+    "README.md",
+    "server.json"
+  ],
+  "keywords": [
+    "ikuna",
+    "mcp",
+    "model-context-protocol"
+  ],
+  "license": "MIT"
+}
