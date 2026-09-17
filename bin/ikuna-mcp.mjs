@@ -211,6 +211,9 @@ export function normalizeToolListMessage(message) {
 
   let changed = false;
   for (const tool of tools) {
+    // Mutations deliberately require confirmed. The native app marks read tools
+    // with this MCP annotation, so only normalize the legacy read surface.
+    if (tool?.annotations?.readOnlyHint !== true) continue;
     const schema = tool && tool.inputSchema;
     if (!schema || typeof schema !== "object") continue;
     const properties = schema.properties;

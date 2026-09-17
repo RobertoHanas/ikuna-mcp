@@ -19,6 +19,7 @@ function readToolsListResult() {
       tools: [
         {
           name: "get_activity_range",
+          annotations: { readOnlyHint: true },
           inputSchema: {
             type: "object",
             additionalProperties: false,
@@ -27,6 +28,7 @@ function readToolsListResult() {
         },
         {
           name: "get_sessions",
+          annotations: { readOnlyHint: true },
           inputSchema: {
             type: "object",
             additionalProperties: false,
@@ -132,7 +134,7 @@ test("advertises read-tool confirmation fields as optional in tools/list", () =>
   }
 });
 
-test("strips confirmed from a required array without dropping real requirements", () => {
+test("leaves mutation confirmation requirements intact", () => {
   const message = {
     result: {
       tools: [
@@ -148,8 +150,8 @@ test("strips confirmed from a required array without dropping real requirements"
     },
   };
 
-  assert.equal(normalizeToolListMessage(message), true);
-  assert.deepEqual(message.result.tools[0].inputSchema.required, ["target"]);
+  assert.equal(normalizeToolListMessage(message), false);
+  assert.deepEqual(message.result.tools[0].inputSchema.required, ["target", "confirmed"]);
 });
 
 test("leaves already-correct schemas and non-tools messages untouched", () => {
@@ -158,6 +160,7 @@ test("leaves already-correct schemas and non-tools messages untouched", () => {
       tools: [
         {
           name: "get_recent_activity",
+          annotations: { readOnlyHint: true },
           inputSchema: { type: "object", required: [], properties: { confirmed: { type: "boolean" } } },
         },
       ],
@@ -238,7 +241,8 @@ test("handles help and version locally without app discovery", async () => {
   assert.match(help.stdout, /Usage: ikuna-mcp/u);
   assert.equal(help.stderr, "");
   assert.equal(version.code, 0);
-  assert.equal(version.stdout, "0.1.1\n");
+  const packageVersion = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
+  assert.equal(version.stdout, `${packageVersion}\n`);
   assert.equal(version.stderr, "");
 });
 
