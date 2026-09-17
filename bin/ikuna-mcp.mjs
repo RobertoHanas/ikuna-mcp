@@ -5,7 +5,9 @@ import { access, realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import process from "node:process";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { knownClientIDs, runSetup } from "./setup.mjs";
 
 const BUNDLE_ID = "com.brnsft.ikuna.macos";
 const HELPER_RELATIVE_PATH = "Contents/bin/ikuna-mcp";
@@ -15,8 +17,14 @@ const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.u
 const START_FIRST = "Ikuna is not running. Start Ikuna first, then run npx -y ikuna-mcp again.";
 const INSTALL_URL = "https://www.brnsft.com/ikuna";
 const HELP = `Usage: ikuna-mcp [--app-path /path/to/Ikuna.app]
+       ikuna-mcp setup [--repair] [--client CLIENT] [--app-path PATH]
 
 Bridge MCP stdio to the signed helper embedded in a running Ikuna app.
+
+Setup:
+  setup            Detect local MCP clients, merge Ikuna config, and verify
+  --repair         Explicitly repair missing, stale, or corrupt Ikuna config
+  --client CLIENT  Limit setup to: ${knownClientIDs().join(", ")}
 
 Options:
   --app-path PATH  Select a particular running Ikuna.app bundle
@@ -27,27 +35,43 @@ Options:
 class CliError extends Error {}
 
 function parseArguments(argv) {
+  const action = argv[0] === "setup" ? "setup" : "bridge";
+  const argumentsToParse = action === "setup" ? argv.slice(1) : argv;
   let appPath;
+  let client;
+  let repair = false;
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
+  for (let index = 0; index < argumentsToParse.length; index += 1) {
+    const argument = argumentsToParse[index];
     if (argument === "--help" || argument === "-h") {
       return { action: "help" };
     } else if (argument === "--version" || argument === "-v") {
       return { action: "version" };
     } else if (argument === "--app-path") {
-      appPath = argv[index + 1];
+      appPath = argumentsToParse[index + 1];
       if (!appPath) throw new CliError("--app-path requires a path to Ikuna.app.");
       index += 1;
     } else if (argument.startsWith("--app-path=")) {
       appPath = argument.slice("--app-path=".length);
       if (!appPath) throw new CliError("--app-path requires a path to Ikuna.app.");
+    } else if (action === "setup" && argument === "--repair") {
+      repair = true;
+    } else if (action === "setup" && argument === "--client") {
+      client = argumentsToParse[index + 1];
+      if (!client) throw new CliError("--client requires a client name.");
+      index += 1;
+    } else if (action === "setup" && argument.startsWith("--client=")) {
+      client = argument.slice("--client=".length);
+      if (!client) throw new CliError("--client requires a client name.");
     } else {
       throw new CliError(`Unknown argument: ${argument}. Run ikuna-mcp --help for usage.`);
     }
   }
 
-  return { action: "bridge", appPath };
+  if (client && !knownClientIDs().includes(client)) {
+    throw new CliError(`Unknown client '${client}'. Expected one of: ${knownClientIDs().join(", ")}.`);
+  }
+  return { action, appPath, client, repair };
 }
 
 function discoveryScript() {
@@ -300,6 +324,103 @@ function runHelper(helperPath) {
   });
 }
 
+function verifyHelper(helperPath) {
+  return new Promise((resolveVerification) => {
+    const child = spawn(helperPath, [], {
+      env: { ...process.env, IKUNA_MCP_CLIENT_ID: "diagnostic" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const responses = new Map();
+    let stderr = "";
+    let settled = false;
+    const lines = createInterface({ input: child.stdout });
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      lines.close();
+      if (!result.ok && child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      resolveVerification(result);
+    };
+    const timeout = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      finish({ ok: false, message: "Verification timed out. Open Ikuna and retry." });
+    }, 10_000);
+    timeout.unref();
+
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-2_000); });
+    child.once("error", (error) => finish({ ok: false, message: `Could not start the Ikuna helper: ${error.message}` }));
+    child.once("close", (code) => {
+      if (!settled && responses.size < 4) {
+        finish({ ok: false, message: `The Ikuna helper closed before verification completed${stderr.trim() ? `: ${stderr.trim()}` : ` (exit ${code})`}.` });
+      }
+    });
+    lines.on("line", (line) => {
+      let response;
+      try {
+        response = JSON.parse(line);
+      } catch {
+        finish({ ok: false, message: "The Ikuna helper returned invalid JSON during verification." });
+        return;
+      }
+      if (response.id !== undefined) responses.set(response.id, response);
+      if (![1, 2, 3, 4].every((id) => responses.has(id))) return;
+      const initialization = responses.get(1);
+      const tools = responses.get(2);
+      const prompts = responses.get(3);
+      const health = responses.get(4);
+      const healthResult = health?.result;
+      const payload = healthResult?.structuredContent
+        ?? (() => {
+          try { return JSON.parse(healthResult?.content?.find((item) => item.type === "text")?.text ?? "null"); }
+          catch { return undefined; }
+        })();
+      if (initialization?.error || initialization?.result?.protocolVersion !== "2025-11-25"
+          || tools?.error || !Array.isArray(tools?.result?.tools)
+          || prompts?.error || !Array.isArray(prompts?.result?.prompts) || health?.error
+          || healthResult?.isError === true || payload?.appReachable !== true || payload?.status !== "ready") {
+        finish({ ok: false, message: "Handshake failed. Review AI Connections permissions, open Ikuna, and retry." });
+        return;
+      }
+      const toolCount = tools.result?.tools?.length ?? 0;
+      const promptCount = prompts.result?.prompts?.length ?? 0;
+      finish({ ok: true, message: `Handshake OK: Ikuna ready, ${toolCount} tools, ${promptCount} prompts.` });
+    });
+
+    const requests = [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "ikuna-setup", version: VERSION } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      { jsonrpc: "2.0", id: 3, method: "prompts/list", params: {} },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "health", arguments: {} } },
+    ];
+    child.stdin.end(`${requests.map((request) => JSON.stringify(request)).join("\n")}\n`);
+  });
+}
+
+async function verifySetup(requestedAppPath) {
+  let discovery;
+  try {
+    discovery = await discoverApp();
+  } catch (error) {
+    return { ok: false, message: `${error.message} Manual step: open Ikuna and retry.` };
+  }
+  let appPath;
+  try {
+    appPath = await selectRunningApp(discovery, requestedAppPath);
+  } catch (error) {
+    return { ok: false, message: `${error.message} Configuration was saved; open Ikuna and rerun setup.` };
+  }
+  const helperPath = resolve(appPath, HELPER_RELATIVE_PATH);
+  try {
+    await access(helperPath, fsConstants.X_OK);
+  } catch {
+    return { ok: false, message: `Ikuna's MCP helper is missing at ${helperPath}. Update or reinstall Ikuna, then retry.` };
+  }
+  return verifyHelper(helperPath);
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const parsedArguments = parseArguments(argv);
   if (parsedArguments.action === "help") {
@@ -312,6 +433,13 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (process.platform !== "darwin") {
     throw new CliError("ikuna-mcp requires macOS and the Ikuna app.");
+  }
+
+  if (parsedArguments.action === "setup") {
+    return runSetup({
+      onlyClient: parsedArguments.client,
+      verify: () => verifySetup(parsedArguments.appPath || process.env.IKUNA_APP_PATH),
+    });
   }
 
   const requestedAppPath = parsedArguments.appPath || process.env.IKUNA_APP_PATH;

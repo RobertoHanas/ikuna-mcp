@@ -8,7 +8,22 @@ Connect your AI client to the workspace context in the Ikuna app running on your
 
 1. Install Node.js 18 or later, including `npx`.
 2. Open Ikuna and enable the capabilities you want to share in **Settings → AI Connections**.
-3. Add this entry to your MCP client's `mcpServers` configuration, keeping your other servers:
+3. Run the guided setup:
+
+```sh
+npx -y ikuna-mcp setup
+```
+
+Setup detects Claude Desktop, Codex, Claude Code, and Cursor, merges only Ikuna's entry into their existing configuration, retains the latest three backups, and verifies the local MCP handshake. Re-run the same command to repair stale or missing values, or make that intent explicit:
+
+```sh
+npx -y ikuna-mcp setup --repair
+npx -y ikuna-mcp setup --client codex
+```
+
+Exit status `0` means every detected client was configured and the handshake passed, `1` means configuration was saved but verification needs a manual step, and `2` means no detected client could be configured.
+
+For a client that is not detected automatically, add this entry to its `mcpServers` configuration, keeping your other servers:
 
 ```json
 "ikuna": { "command": "npx", "args": ["-y", "ikuna-mcp"] }
