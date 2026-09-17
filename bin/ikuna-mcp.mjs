@@ -196,9 +196,92 @@ function forwardSignals(child) {
   };
 }
 
+const CONFIRMED_FIELD = "confirmed";
+
+// Ikuna builds every scoped read tool with a `confirmed` property but omits the
+// JSON Schema `required` key when the required list is empty. A strict MCP
+// client reads "properties present, no required" as "every property is
+// required" and rejects a valid read call (for example get_activity_range with
+// no confirmed) before it reaches Ikuna. Repair the advertised schema so the
+// optional confirmation field stays optional. Returns true when it changed the
+// message in place.
+export function normalizeToolListMessage(message) {
+  const tools = message && message.result && message.result.tools;
+  if (!Array.isArray(tools)) return false;
+
+  let changed = false;
+  for (const tool of tools) {
+    // Mutations deliberately require confirmed. The native app marks read tools
+    // with this MCP annotation, so only normalize the legacy read surface.
+    if (tool?.annotations?.readOnlyHint !== true) continue;
+    const schema = tool && tool.inputSchema;
+    if (!schema || typeof schema !== "object") continue;
+    const properties = schema.properties;
+    if (!properties || typeof properties !== "object") continue;
+
+    if (!Array.isArray(schema.required)) {
+      schema.required = [];
+      changed = true;
+    } else if (schema.required.includes(CONFIRMED_FIELD)) {
+      schema.required = schema.required.filter((name) => name !== CONFIRMED_FIELD);
+      changed = true;
+    }
+
+    const confirmed = properties[CONFIRMED_FIELD];
+    if (confirmed && typeof confirmed === "object" && "default" in confirmed) {
+      delete confirmed.default;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// Ikuna speaks newline-delimited JSON-RPC on stdout. This reads the stream line
+// by line, repairs any tools/list result, and forwards every other byte
+// untouched. Any line that is not JSON we can parse is passed through verbatim.
+export function createStdoutSchemaNormalizer(write) {
+  let buffer = "";
+
+  const handleLine = (line) => {
+    let output = line;
+    if (line.length > 0) {
+      try {
+        const message = JSON.parse(line);
+        if (message && typeof message === "object" && normalizeToolListMessage(message)) {
+          output = JSON.stringify(message);
+        }
+      } catch {
+        // Not parseable JSON; forward the original bytes untouched.
+      }
+    }
+    write(`${output}\n`);
+  };
+
+  return {
+    push(chunk) {
+      buffer += chunk;
+      let newlineIndex;
+      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+        handleLine(buffer.slice(0, newlineIndex));
+        buffer = buffer.slice(newlineIndex + 1);
+      }
+    },
+    flush() {
+      if (buffer.length > 0) {
+        write(buffer);
+        buffer = "";
+      }
+    },
+  };
+}
+
 function runHelper(helperPath) {
   return new Promise((resolveExit, reject) => {
-    const child = spawn(helperPath, [], { stdio: "inherit" });
+    const child = spawn(helperPath, [], { stdio: ["inherit", "pipe", "inherit"] });
+    const normalizer = createStdoutSchemaNormalizer((text) => process.stdout.write(text));
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => normalizer.push(chunk));
+    child.stdout.on("end", () => normalizer.flush());
     const removeSignalHandlers = forwardSignals(child);
 
     child.once("error", (error) => {

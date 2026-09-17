@@ -68,6 +68,6 @@ Custom installation locations are discovered automatically from the running app.
 MCP client → npx ikuna-mcp → Ikuna.app/Contents/bin/ikuna-mcp → local XPC bridge → Ikuna
 ```
 
-The npm package discovers the running Ikuna bundle and launches its embedded native helper with the client's stdio streams. The native helper provides the signed XPC connection, request deadlines, and per-client protocol sessions. Ikuna remains responsible for tools, workspace data, approvals, and mutations. The package has no runtime dependencies, reads no workspace database, and opens no network listener.
+The npm package discovers the running Ikuna bundle and launches its embedded native helper with the client's stdio streams. The native helper provides the signed XPC connection, request deadlines, and per-client protocol sessions. Ikuna remains responsible for tools, workspace data, approvals, and mutations. On the way back to the client, the package repairs the `tools/list` schema so an optional confirmation field stays optional and strict clients do not reject valid read calls; it changes no request, workspace data, or result. The package has no runtime dependencies, reads no workspace database, and opens no network listener.
 
 The MCP Registry manifest is included as `server.json`. Maintainers can follow [RELEASE.md](RELEASE.md) to publish the npm package and listing together.
