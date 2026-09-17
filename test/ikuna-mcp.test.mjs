@@ -5,8 +5,41 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createStdoutSchemaNormalizer, normalizeToolListMessage } from "../bin/ikuna-mcp.mjs";
 
 const cliPath = fileURLToPath(new URL("../bin/ikuna-mcp.mjs", import.meta.url));
+
+// A tools/list result shaped like the one Ikuna's scoped read tools publish:
+// a `confirmed` property, `additionalProperties: false`, and no `required` key.
+function readToolsListResult() {
+  return {
+    jsonrpc: "2.0",
+    id: 1,
+    result: {
+      tools: [
+        {
+          name: "get_activity_range",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { confirmed: { type: "boolean", default: false } },
+          },
+        },
+        {
+          name: "get_sessions",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              limit: { type: "integer" },
+              confirmed: { type: "boolean", default: false },
+            },
+          },
+        },
+      ],
+    },
+  };
+}
 
 async function fixture({ running = true, installed = true, staleInstalledPath = false, helper = true, discoveryDelayMs = 0 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "ikuna-mcp-test-"));
@@ -80,6 +113,80 @@ function waitForChild(child, timeoutMs = 3_000) {
     });
   });
 }
+
+test("advertises read-tool confirmation fields as optional in tools/list", () => {
+  const message = readToolsListResult();
+  assert.equal(normalizeToolListMessage(message), true);
+
+  for (const tool of message.result.tools) {
+    assert.deepEqual(
+      tool.inputSchema.required,
+      [],
+      `${tool.name} must advertise an explicit empty required array`,
+    );
+    assert.equal(
+      "default" in tool.inputSchema.properties.confirmed,
+      false,
+      `${tool.name} must drop the confirmed default`,
+    );
+  }
+});
+
+test("strips confirmed from a required array without dropping real requirements", () => {
+  const message = {
+    result: {
+      tools: [
+        {
+          name: "start_focus_session",
+          inputSchema: {
+            type: "object",
+            required: ["target", "confirmed"],
+            properties: { target: { type: "string" }, confirmed: { type: "boolean" } },
+          },
+        },
+      ],
+    },
+  };
+
+  assert.equal(normalizeToolListMessage(message), true);
+  assert.deepEqual(message.result.tools[0].inputSchema.required, ["target"]);
+});
+
+test("leaves already-correct schemas and non-tools messages untouched", () => {
+  const correct = {
+    result: {
+      tools: [
+        {
+          name: "get_recent_activity",
+          inputSchema: { type: "object", required: [], properties: { confirmed: { type: "boolean" } } },
+        },
+      ],
+    },
+  };
+  assert.equal(normalizeToolListMessage(correct), false);
+  assert.equal(normalizeToolListMessage({ jsonrpc: "2.0", id: 2, method: "tools/list" }), false);
+  assert.equal(normalizeToolListMessage({ result: { ok: true } }), false);
+});
+
+test("repairs a tools/list response split across stdout chunks and forwards other lines", () => {
+  let output = "";
+  const normalizer = createStdoutSchemaNormalizer((text) => { output += text; });
+  const responseLine = JSON.stringify(readToolsListResult());
+
+  normalizer.push('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n');
+  normalizer.push(responseLine.slice(0, 24));
+  normalizer.push(`${responseLine.slice(24)}\nnot json\n`);
+  normalizer.flush();
+
+  const lines = output.split("\n");
+  assert.equal(lines[0], '{"jsonrpc":"2.0","id":1,"method":"initialize"}');
+  const repaired = JSON.parse(lines[1]);
+  for (const tool of repaired.result.tools) {
+    assert.deepEqual(tool.inputSchema.required, []);
+    assert.equal("default" in tool.inputSchema.properties.confirmed, false);
+  }
+  assert.equal(lines[2], "not json");
+});
 
 test("proxies stdin and stdout through the bundled native helper", async () => {
   const { osascriptPath } = await fixture();
