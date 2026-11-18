@@ -2,7 +2,7 @@
 
 Connect your AI client to the workspace context in the Ikuna app running on your Mac.
 
-`ikuna-mcp` 0.1.1 is listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=ikuna) as `io.github.RobertoHanas/ikuna-mcp`.
+`ikuna-mcp` is listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=ikuna) as `io.github.RobertoHanas/ikuna-mcp`.
 
 ## Connect
 

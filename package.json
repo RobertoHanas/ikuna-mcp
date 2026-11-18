@@ -3,7 +3,7 @@
   "mcpName": "io.github.RobertoHanas/ikuna-mcp",
   "version": "0.2.1",
   "description": "Stdio bridge to the MCP server included with the Ikuna macOS app",
-  "homepage": "https://www.npmjs.com/package/ikuna-mcp",
+  "homepage": "https://ikuna.app/mcp",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/RobertoHanas/ikuna-mcp.git"
